@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 import time
 
-
 def iterative_threshold(magnitude_img):
     """
     Implementa o filtro de limiar iterativo descrito na Seção III-D do artigo.
@@ -90,106 +89,75 @@ def non_maximum_suppression(magnitude, angle):
     return nms_output
 
 
-def improved_canny_algorithm(image_path, alpha=0.75):
+def improved_canny_algorithm(image_path, alpha=0.5):
     """
-    Função principal que implementa o fluxograma da Fig. 2 [cite: 96-103].
-
-    Args:
-        image_path (str): Caminho para a imagem de entrada.
-        alpha (float): Coeficiente para Resolução de Gradiente (deve estar em [0.5, 1.0])[cite: 186].
+    Função principal que implementa o fluxograma da Fig. 2 (artigo).
     """
-
     # 1. Imagem de Entrada
     img = cv2.imread(image_path)
     if img is None:
         print(f"Erro: Não foi possível carregar a imagem em {image_path}")
         return None, None
 
-    # 2. Gray Scaling [cite: 98]
-    # O artigo usa uma fórmula de média ponderada específica[cite: 93],
-    # que é o padrão usado pelo OpenCV (BT.601 / BT.709)
+    # 2. Gray Scaling
     gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # 3. Median Filter [cite: 99]
-    # O artigo substitui o filtro Gaussiano pelo Mediano[cite: 29].
-    # O artigo indica que um kernel 3x3 teve bom desempenho[cite: 130].
+    # 3. Median Filter (3x3)
     median_img = cv2.medianBlur(gray_img, 3)
 
-    # 4. Cálculo de Gradiente (Operador Sobel Melhorado) [cite: 137]
-    # Usando os kernels exatos definidos nas equações (2) e (3) do artigo
-
+    # 4. Cálculo de Gradiente (Operador Sobel Melhorado)
     sqrt2_4 = np.sqrt(2) / 4.0
-
-    # Kernel Gx [cite: 139]
     kernel_x = np.array(
         [[-sqrt2_4, 0, sqrt2_4], [-1, 0, 1], [-sqrt2_4, 0, sqrt2_4]], dtype=np.float32
     )
-
-    # Kernel Gy [cite: 142]
     kernel_y = np.array(
         [[-sqrt2_4, -1, -sqrt2_4], [0, 0, 0], [sqrt2_4, 1, sqrt2_4]], dtype=np.float32
     )
 
-    # Aplicar os filtros. Usamos CV_64F para precisão e para capturar valores negativos.
     Gx = cv2.filter2D(median_img, cv2.CV_64F, kernel_x)
     Gy = cv2.filter2D(median_img, cv2.CV_64F, kernel_y)
 
-    # Calcular Magnitude e Ângulo (Direção) do Gradiente
+    # Magnitude e Ângulo
     magnitude = np.sqrt(Gx**2 + Gy**2)
-    angle = np.arctan2(Gy, Gx)  # arctan2 lida com todos os quadrantes
 
-    # 5. Iterative gradient threshold filter (Filtro Iterativo) [cite: 100]
-    # Isso calcula o Limiar T (T_converged) [cite: 159-183]
+    # ⚠️ Normalização para 0–1 (fundamental no artigo)
+    if np.max(magnitude) > 0:
+        magnitude = magnitude / np.max(magnitude)
+
+    angle = np.arctan2(Gy, Gx)
+
+    # 5. Iterative gradient threshold filter
     print("Iniciando cálculo do limiar iterativo...")
     T_converged = iterative_threshold(magnitude)
     print(f"Limiar T iterativo convergido: {T_converged:.4f}")
 
-    # 6. Gradient Resolution (Resolução de Gradiente)
-    # Calcula K = alpha * T^2 e zera todos os gradientes abaixo de K
+    # 6. Gradient Resolution
     K = alpha * (T_converged**2)
     print(f"Calculando K (Resolução) com alpha={alpha}: K = {K:.4f}")
 
-    # Criar o mapa de magnitude filtrado: qualquer valor < K é definido como 0
     filtered_magnitude = magnitude.copy()
     filtered_magnitude[filtered_magnitude < K] = 0
 
-    # 7. Non Maximum Suppression (NMS) [cite: 101]
-    # Aplicamos NMS ao mapa de magnitude JÁ FILTRADO (usando os ângulos originais)
+    # 7. Non Maximum Suppression
     print("Aplicando Supressão Não Máxima (NMS)...")
     nms_img = non_maximum_suppression(filtered_magnitude, angle)
 
-    # 8. Single threshold setting and binarization
-    # Como o NMS zera todos os pixels que não são picos de borda,
-    # e já zeramos todos os picos fracos (abaixo de K),
-    # qualquer valor não-zero restante no mapa NMS é uma borda forte.
-    # A binarização é simplesmente definir esses pixels restantes para 255.
-
-    # Normalizar para 8 bits (0-255)
+    # 8. Binarização final
     if np.max(nms_img) > 0:
         nms_img_norm = (nms_img / np.max(nms_img)) * 255
     else:
         nms_img_norm = nms_img
 
     final_output = nms_img_norm.astype(np.uint8)
-
-    # Uma binarização final simples para garantir uma saída puramente P&B.
-    # Qualquer pixel que sobreviveu ao NMS é uma borda.
     _, final_binary = cv2.threshold(final_output, 1, 255, cv2.THRESH_BINARY)
 
+    print("Valores finais únicos após binarização:", np.unique(final_binary)[:10])
+
     print("Processamento concluído.")
-    return (
-        final_binary,
-        nms_img,
-    )  # Retorna a imagem binária e o mapa de borda NMS (para depuração)
+    return final_binary, nms_img
 
+IMAGE_FILE = "process_image.png"
 
-# --- EXEMPLO DE USO ---
-
-# Substitua 'sua_imagem.jpg' pelo caminho da sua imagem de teste
-# (Usei a imagem (a) da Fig. 5 como referência conceitual)
-IMAGE_FILE = "ship_image.png"  # Você deve fornecer esta imagem
-
-# Gerar uma imagem de navio de exemplo se ela não existir (apenas para teste)
 try:
     cv2.imread(IMAGE_FILE).shape
 except AttributeError:
@@ -203,7 +171,6 @@ except AttributeError:
     ship_img_mock[noise < 5] = 255  # Pimenta
     ship_img_mock[noise > 95] = 0  # Sal
     cv2.imwrite(IMAGE_FILE, ship_img_mock)
-
 
 start_time = time.time()
 improved_canny_output, _ = improved_canny_algorithm(IMAGE_FILE, alpha=0.7)
@@ -220,7 +187,6 @@ gray_orig = cv2.cvtColor(original_img, cv2.COLOR_BGR2GRAY)
 # O Canny padrão usa filtro Gaussiano e Histerese (limiar duplo)
 opencv_canny = cv2.Canny(gray_orig, 50, 150)
 
-
 if improved_canny_output is not None:
     cv2.imshow("Original com Ruido", original_img)
     cv2.imshow("Canny Padrao (OpenCV)", opencv_canny)
@@ -231,4 +197,3 @@ if improved_canny_output is not None:
     )
     cv2.waitKey(0)
     cv2.destroyAllWindows()
-
